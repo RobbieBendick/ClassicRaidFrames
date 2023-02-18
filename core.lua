@@ -1,6 +1,9 @@
-local core                    = {};
-RaidFrameTinker               = AceLibrary("AceAddon-2.0"):new();
-core.HealthBar_OnValueChanged = HealthBar_OnValueChanged
+local core                             = {};
+RaidFrameTinker                        = AceLibrary("AceAddon-2.0"):new();
+core.HealthBar_OnValueChanged          = HealthBar_OnValueChanged
+
+core.UnitFrameHealthBar_OnValueChanged = UnitFrameHealthBar_OnValueChanged
+
 
 
 function RaidFrameTinker:PrintMessage(msg)
@@ -8,13 +11,11 @@ function RaidFrameTinker:PrintMessage(msg)
 end
 
 function RaidFrameTinker:Variables()
-    self.mouseoverunit = nil
-    self.enabled = false
-    self.preparesort = false
-    self.frames, self.visible, self.groupframes = {}, {}, {}
+    self.mouseoverunit                              = nil
+    self.enabled                                    = false
+    self.preparesort                                = false
+    self.frames, self.visible, self.groupframes     = {}, {}, {}
     self.feign, self.unavail, self.res, self.hpaura = {}, {}, {}, {}
-
-
 
 
     self.TempTooltipDebuffs      = {}
@@ -50,6 +51,85 @@ function RaidFrameTinker:Variables()
     self.cooldownSpells          = {}
 end
 
+function RaidFrameTinker:OnInitialize()
+    self:Variables()
+
+    self.master = CreateFrame("Frame", "RaidFrameTinker", UIParent)
+    self.master:ClearAllPoints()
+    self.master:SetPoint("TOPLEFT", UIParent, "TOPLEFT", 100, -200)
+    self.master:SetMovable(true)
+
+    self.master:SetHeight(200);
+    self.master:SetWidth(200);
+
+    self.master:SetBackdropColor(0.5, 0.5, 0.5, 0.5)
+    self.master:Show()
+
+    self.tooltip = CreateFrame("GameTooltip", "sRaidFramesTooltip", WorldFrame, "GameTooltipTemplate")
+    self.tooltip:SetOwner(WorldFrame, "ANCHOR_NONE");
+
+
+    for i = 1, MAX_RAID_MEMBERS do
+        self:CreateUnitFrame(i)
+    end
+
+    for i = 1, 9 do
+        self:CreateGroupFrame(i)
+    end
+
+    self:PrintMessage("RaidFrameTinker loaded")
+end
+
+function myFunction()
+    DEFAULT_CHAT_FRAME:AddMessage("Hello World!")
+end
+
+local interval = 1
+local timeElapsed = 0
+
+function onEvent()
+    local unit = arg1;
+    if string.sub(unit, 1, 4) ~= "raid" then
+        return
+    end
+
+    local frame = getglobal("RaidFrameTinker_" .. string.sub(unit, 5, 5))
+    frame.hpbar:SetValue(UnitHealth(unit) / UnitHealthMax(unit) * 100)
+
+    DEFAULT_CHAT_FRAME:AddMessage("unit: " .. unit)
+end
+
+local f = CreateFrame("Frame")
+f:RegisterEvent("UNIT_HEALTH")
+f:SetScript("OnEvent", onEvent)
+
+
+
+
+-- Define a function to update the raid members' health values
+function RaidFrameTinker:UpdateRaidMemberHealth()
+    for i = 1, 40 do
+        local unit = "raid" .. i
+        if UnitExists(unit) then
+            self.raidMemberHealth[unit] = { current = UnitHealth(unit), max = UnitHealthMax(unit) }
+        else
+            self.raidMemberHealth[unit] = nil
+        end
+    end
+end
+
+-- Define a function to check for changes in raid member health values
+function RaidFrameTinker:CheckRaidMemberHealth()
+    for unit, health in pairs(self.raidMemberHealth) do
+        local currentHealth = UnitHealth(unit)
+        if currentHealth < health.current then
+            -- The raid member has taken damage, update their health values
+            self.raidMemberHealth[unit].current = currentHealth
+            self.raidMemberHealth[unit].max = UnitHealthMax(unit)
+        end
+    end
+end
+
 function RaidFrameTinker:PLAYER_ENTERING_WORLD()
     if UnitInRaid("player") then
         self:JoinedRaid();
@@ -57,7 +137,6 @@ function RaidFrameTinker:PLAYER_ENTERING_WORLD()
 end
 
 function HealthBar_OnValueChanged(v)
-    DEFAULT_CHAT_FRAME:AddMessage("HealthBar_OnValueChanged: " .. this:GetName())
     core.HealthBar_OnValueChanged(v)
     if this == PlayerFrameHealthBar or this == TargetFrameHealthBar then
         local r, g, b
@@ -70,6 +149,10 @@ function HealthBar_OnValueChanged(v)
         end
         this:SetStatusBarColor(r, g, b);
     end
+end
+
+function UnitFrameHealthBar_OnValueChanged(v)
+    core.UnitFrameHealthBar_OnValueChanged(v)
 end
 
 function RaidFrameTinker:UpdateAllUnits()
@@ -293,37 +376,19 @@ function RaidFrameTinker:OnUnitClick()
     end
 end
 
-function RaidFrameTinker:OnInitialize()
-    self:Variables()
-
-    self.master = CreateFrame("Frame", "RaidFrameTinker", UIParent)
-    self.master:ClearAllPoints()
-    self.master:SetPoint("TOPLEFT", UIParent, "TOPLEFT", 0, 0)
-    self.master:SetMovable(true)
-
-    self.master:SetHeight(200);
-    self.master:SetWidth(200);
-
-    self.master:SetBackdropColor(0.5, 0.5, 0.5, 0.5)
-    self.master:Show()
-
-
-    for i = 1, MAX_RAID_MEMBERS do
-        self:CreateUnitFrame(i)
-    end
-
-    for i = 1, 9 do
-        self:CreateGroupFrame(i)
-    end
-
-    self:PrintMessage("RaidFrameTinker loaded")
-end
-
 function RaidFrameTinker:MouseOverHighlight(f, type)
     if type == "ENTER" then
         f.hpbar.highlight:Show()
     else
         f.hpbar.highlight:Hide()
+    end
+end
+
+function RaidFrameTinker:UNIT_HEALTH(qrg1)
+    local unit = arg1
+    local id = self:GetUnitID(unit)
+    if id then
+        self:UpdateUnit(unit)
     end
 end
 
@@ -338,6 +403,23 @@ function RaidFrameTinker:CreateUnitFrame(id)
     local _, class = UnitClass("raid" .. id)
     local frame = CreateFrame("Button", "RaidFrameTinker_" .. id, self.master)
     frame:SetScript("OnClick", self.OnUnitClick)
+
+    frame:SetScript("OnEnter", function()
+        self:MouseOverHighlight(frame, "ENTER")
+    end)
+
+
+    frame:SetScript("OnLeave", function()
+        self:MouseOverHighlight(frame, "LEAVE")
+    end)
+
+    frame:RegisterEvent("RAID_ROSTER_UPDATE")
+    frame:RegisterEvent("UNIT_HEALTH")
+    frame:SetScript("OnEvent", function(a, event)
+        self:PrintMessage(a)
+        self:PrintMessage(event)
+    end)
+
     frame:SetBackdrop({
         bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
         tile = true,
@@ -353,13 +435,31 @@ function RaidFrameTinker:CreateUnitFrame(id)
     frame:Show()
 
 
-
-    frame:ClearAllPoints()
-
-
     -- FOR NOW
+
     if id == 1 then
-        frame:SetPoint("TOPLEFT", UIParent, "TOPLEFT", 0, 0)
+        frame:SetPoint("TOPLEFT", self.master, "TOPLEFT", 0, 0)
+    elseif id == 6 then
+        frame:SetPoint("TOPLEFT", getglobal("RaidFrameTinker_" .. (id - 5)), "TOPRIGHT",
+            2)
+    elseif id == 11 then
+        frame:SetPoint("TOPLEFT", getglobal("RaidFrameTinker_" .. (id - 5)), "TOPRIGHT",
+            2)
+    elseif id == 16 then
+        frame:SetPoint("TOPLEFT", getglobal("RaidFrameTinker_" .. (id - 5)), "TOPRIGHT",
+            2)
+    elseif id == 21 then
+        frame:SetPoint("TOPLEFT", getglobal("RaidFrameTinker_" .. (id - 5)), "TOPRIGHT",
+            2)
+    elseif id == 26 then
+        frame:SetPoint("TOPLEFT", getglobal("RaidFrameTinker_" .. (id - 5)), "TOPRIGHT",
+            2)
+    elseif id == 31 then
+        frame:SetPoint("TOPLEFT", getglobal("RaidFrameTinker_" .. (id - 5)), "TOPRIGHT",
+            2)
+    elseif id == 36 then
+        frame:SetPoint("TOPLEFT", getglobal("RaidFrameTinker_" .. (id - 5)), "TOPRIGHT",
+            2)
     else
         frame:SetPoint("TOPLEFT", getglobal("RaidFrameTinker_" .. (id - 1)), "BOTTOMLEFT",
             -2)
@@ -373,7 +473,15 @@ function RaidFrameTinker:CreateUnitFrame(id)
     frame.title:SetText(UnitName("raid" .. id))
     frame.title:Show()
 
+    if class and RAID_CLASS_COLORS[class] then
+        frame.title:SetTextColor(RAID_CLASS_COLORS[class].r,
+            RAID_CLASS_COLORS[class].g, RAID_CLASS_COLORS[class].b)
+    end
     frame.hpbar = CreateFrame("StatusBar", nil, frame)
+    frame.hpbar:SetScript("OnEvent", function(self, event, unit)
+        DEFAULT_CHAT_FRAME:AddMessage(event)
+        DEFAULT_CHAT_FRAME:AddMessage(unit)
+    end)
     frame.hpbar:SetAllPoints(frame)
     frame.hpbar:SetMinMaxValues(0, 100)
     if UnitHealth("raid" .. id) > 100 then
@@ -381,6 +489,7 @@ function RaidFrameTinker:CreateUnitFrame(id)
     else
         frame.hpbar:SetValue(UnitHealth("raid" .. id))
     end
+
     frame.hpbar:SetFrameLevel(2)
     frame.hpbar:SetStatusBarTexture("Interface\\TargetingFrame\\UI-StatusBar");
     if class and RAID_CLASS_COLORS[class] then
@@ -389,6 +498,13 @@ function RaidFrameTinker:CreateUnitFrame(id)
     else
         frame.hpbar:SetStatusBarColor(0.5, 0.5, 0.5)
     end
+
+
+    frame.hpbar.highlight = frame.hpbar:CreateTexture(nil, "OVERLAY")
+    frame.hpbar.highlight:SetAlpha(0.3)
+    frame.hpbar.highlight:SetTexture("Interface\\AddOns\\RaidFrameTinker\\textures\\mouseoverHighlight.tga")
+    frame.hpbar.highlight:SetBlendMode("ADD")
+    frame.hpbar.highlight:Show()
 
     frame.buff1 = CreateFrame("Button", nil, frame)
     frame.buff1.texture = frame.buff1:CreateTexture(nil, "ARTWORK")
@@ -430,10 +546,18 @@ function RaidFrameTinker:CreateUnitFrame(id)
     frame.id = id
     frame.unit = "raid" .. id
 
-
     -- f:Show();
-    self:PrintMessage("Created frame for " .. frame.unit)
     self.frames["raid" .. id] = frame
+end
+
+function RaidFrameTinker:SetWHP(frame, width, height, p1, relative, p2, x, y)
+    frame:SetWidth(width)
+    frame:SetHeight(height)
+
+    if (p1) then
+        frame:ClearAllPoints()
+        frame:SetPoint(p1, relative, p2, x, y)
+    end
 end
 
 function RaidFrameTinker:CreateGroupFrame(id)
@@ -447,20 +571,11 @@ function RaidFrameTinker:CreateGroupFrame(id)
     frame:ClearAllPoints();
     frame:SetParent(self.master);
     frame:SetPoint("LEFT", self.master, "LEFT");
-    if id == 9 then
-        frame:SetScript("OnDragStart",
-            function()
-                if IsAltKeyDown() then self:StartMovingAll() end
-                frame:StartMoving()
-            end)
-    else
-        frame:SetScript("OnDragStart",
-            function()
-                if IsAltKeyDown() then self:StartMovingAll() end
-                frame:StartMoving()
-            end)
-    end
-
+    frame:SetScript("OnDragStart",
+        function()
+            if IsAltKeyDown() then self:StartMovingAll() end
+            frame:StartMoving()
+        end)
     frame:SetScript("OnDragStop",
         function()
             if frame.multidrag == 1 then self:StopMovingOrSizingAll() end
@@ -472,14 +587,20 @@ function RaidFrameTinker:CreateGroupFrame(id)
 
 
     frame.title = frame:CreateFontString(nil, "ARTWORK")
-    frame.title:SetAllPoints(frame)
+    frame.title:ClearAllPoints()
     frame.title:SetFontObject(GameFontNormalSmall)
-    frame.title:SetJustifyH("LEFT")
     frame.title:SetText("Group" .. tostring(id))
-    if (id ~= 9) then
-        frame.title:Hide()
-    end
     frame.title:Show()
+
+    for i = 1, 9 do
+        if id == i then
+            self:SetWHP(frame.title, 80, frame:GetHeight(), "TOP", getglobal("RaidFrameTinker_" .. (i * 5) - 4), "TOP", 0,
+                45)
+        end
+    end
+
+
+
 
 
     frame:ClearAllPoints();
